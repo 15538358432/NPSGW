@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"nps/internal/config"
-	"nps/internal/nsqx"
 	"nps/internal/nps"
+	"nps/internal/nsqx"
 )
 
 // pullMsg rs 模块发布到 pull_topic 的指令消息结构
@@ -73,7 +73,7 @@ func (s *Syncer) extractParam(body []byte) string {
 
 // normalizeItems 将 API 返回的原始数据解析为列表格式，并为每项添加 optType、platform、转换时间格式
 // 兼容 API 返回 {data: [...]} 包装、单个对象、或纯数组三种情况
-func (s *Syncer) normalizeItems(raw json.RawMessage) ([]map[string]interface{}, error) {
+func (s *Syncer) normalizeItems(raw json.RawMessage, optType string) ([]map[string]interface{}, error) {
 	var items []map[string]interface{}
 
 	// 先尝试解析为列表
@@ -114,9 +114,14 @@ func (s *Syncer) normalizeItems(raw json.RawMessage) ([]map[string]interface{}, 
 
 	log.Printf("[normalizeData] 提取到 %d 条数据，开始添加 optType/platform 并转换时间格式", len(items))
 
-	// 为每项添加 optType、platform，并转换时间字段格式
+	s.decorateItems(items, optType)
+	return items, nil
+}
+
+// decorateItems 为每项添加 optType、platform，并转换时间字段格式（全量/变更事件共用）
+func (s *Syncer) decorateItems(items []map[string]interface{}, optType string) {
 	for i := range items {
-		items[i]["optType"] = "all"
+		items[i]["optType"] = optType
 		if s.platform != "" {
 			items[i]["platform"] = s.platform
 		}
@@ -129,12 +134,11 @@ func (s *Syncer) normalizeItems(raw json.RawMessage) ([]map[string]interface{}, 
 				items[i]["createdAt"], items[i]["updatedAt"])
 		}
 	}
-	return items, nil
 }
 
 // normalizeData 将归一化后的列表序列化为 JSON 并返回条数（按页发布场景使用）
 func (s *Syncer) normalizeData(raw json.RawMessage) (json.RawMessage, int, error) {
-	items, err := s.normalizeItems(raw)
+	items, err := s.normalizeItems(raw, "all")
 	if err != nil {
 		return nil, 0, err
 	}
@@ -144,6 +148,7 @@ func (s *Syncer) normalizeData(raw json.RawMessage) (json.RawMessage, int, error
 	}
 	return result, len(items), nil
 }
+
 // convertTimeField 将指定字段的时间从 ISO 8601 格式转为 "2006-01-02 15:04:05"
 // 支持格式: 2025-03-27T15:31:42.223+08:00 或 2025-03-27T15:31:42+08:00
 func (s *Syncer) convertTimeField(item map[string]interface{}, field string) {
@@ -163,6 +168,16 @@ func (s *Syncer) convertTimeField(item map[string]interface{}, field string) {
 	}
 	// 尝试不带毫秒格式
 	if t, err := time.Parse(time.RFC3339, str); err == nil {
+		item[field] = t.Format("2006-01-02 15:04:05")
+		return
+	}
+	// 尝试无时区带毫秒格式（RabbitMQ 变更事件样例: 2025-05-16T11:38:40.443）
+	if t, err := time.Parse("2006-01-02T15:04:05.000", str); err == nil {
+		item[field] = t.Format("2006-01-02 15:04:05")
+		return
+	}
+	// 尝试无时区不带毫秒格式
+	if t, err := time.Parse("2006-01-02T15:04:05", str); err == nil {
 		item[field] = t.Format("2006-01-02 15:04:05")
 		return
 	}
@@ -199,7 +214,7 @@ func (s *Syncer) handleOrgan() error {
 			return fmt.Errorf("拉取组织第%d页失败: %w", page, err)
 		}
 
-		items, err := s.normalizeItems(raw)
+		items, err := s.normalizeItems(raw, "all")
 		if err != nil {
 			return fmt.Errorf("转换组织数据格式失败(第%d页): %w", page, err)
 		}
@@ -249,6 +264,7 @@ func (s *Syncer) handleOrgan() error {
 	log.Printf("[pull] param=organ 分页拉取完成，共 %d 页，total=%d 条", page, total)
 	return nil
 }
+
 // handleUser 分页拉取用户信息并透传
 func (s *Syncer) handleUser() error {
 	sp := s.syncConfig.Users
@@ -352,6 +368,62 @@ func (s *Syncer) HandleAccessConfig(body []byte) error {
 	}
 
 	log.Printf("[cfg] 配置更新成功")
+	return nil
+}
+
+// eventMsg 新警通平台通过 RabbitMQ 推送的变更事件结构（CloudEvents 格式）
+type eventMsg struct {
+	ID   string          `json:"id"`
+	Type string          `json:"type"`
+	Data json.RawMessage `json:"data"`
+}
+
+// eventTypeMap 变更事件 type → (optType, NSQ topic)
+var eventTypeMap = map[string]struct {
+	optType string
+	topic   string
+}{
+	"iam.org.created":  {"add", config.TopicOrg},
+	"iam.org.updated":  {"update", config.TopicOrg},
+	"iam.org.deleted":  {"del", config.TopicOrg},
+	"iam.user.created": {"add", config.TopicUser},
+	"iam.user.updated": {"update", config.TopicUser},
+	"iam.user.deleted": {"del", config.TopicUser},
+}
+
+// HandleEvent 处理 RabbitMQ 变更事件：根据 type 映射 optType，将 data 包装为 JSONArray 后透传到 NSQ
+// 解析失败/未知 type/数据为空 均记日志后按消费成功处理（不重投），仅 NSQ 发布失败才重投
+func (s *Syncer) HandleEvent(body []byte) error {
+	var msg eventMsg
+	if err := json.Unmarshal(body, &msg); err != nil {
+		log.Printf("[event] 解析变更事件失败，丢弃: %v, 原始消息: %s", err, string(body))
+		return nil
+	}
+	mapping, ok := eventTypeMap[msg.Type]
+	if !ok {
+		log.Printf("[event] 忽略未知 type=%s 的事件: id=%s", msg.Type, msg.ID)
+		return nil
+	}
+
+	items, err := s.normalizeItems(msg.Data, mapping.optType)
+	if err != nil {
+		log.Printf("[event] 转换事件数据失败，丢弃: id=%s, type=%s, err=%v", msg.ID, msg.Type, err)
+		return nil
+	}
+	if len(items) == 0 {
+		log.Printf("[event] 事件数据为空，跳过: id=%s, type=%s", msg.ID, msg.Type)
+		return nil
+	}
+
+	normalized, err := json.Marshal(items)
+	if err != nil {
+		log.Printf("[event] 序列化事件数据失败，丢弃: id=%s, err=%v", msg.ID, err)
+		return nil
+	}
+	if err := s.publishRaw(mapping.topic, normalized, mapping.optType, len(items)); err != nil {
+		return fmt.Errorf("透传变更事件失败: %w", err)
+	}
+	log.Printf("[event] 变更事件已转发: id=%s, type=%s, optType=%s, topic=%s", msg.ID, msg.Type, mapping.optType, mapping.topic)
 	return nil
 }
 

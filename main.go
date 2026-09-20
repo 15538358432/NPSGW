@@ -9,10 +9,11 @@ import (
 
 	"nps/internal/api"
 	"nps/internal/config"
+	"nps/internal/mqx"
+	"nps/internal/nps"
 	"nps/internal/nsqx"
 	"nps/internal/store"
 	"nps/internal/syncer"
-	"nps/internal/nps"
 )
 
 func main() {
@@ -114,6 +115,16 @@ func main() {
 		log.Fatalf("订阅 NSQ 配置变更 topic(%s) 失败: %v", config.TopicAccessCfg, err)
 	}
 	defer cfgConsumer.Stop()
+
+	// 监听 RabbitMQ 变更事件（队列 iam.client.<clientId>），url 为空则不启用
+	if startup.Rabbit.URL != "" {
+		queue := "iam.client." + cfgMgr.GetBiz().ClientID
+		rabbitConsumer := mqx.NewConsumer(startup.Rabbit.URL, queue, s.HandleEvent)
+		defer rabbitConsumer.Stop()
+		log.Printf("[init] RabbitMQ 变更事件监听已启动: queue=%s", queue)
+	} else {
+		log.Printf("[init] 未配置 rabbitmq.url，跳过变更事件监听")
+	}
 
 	// 启动 HTTP 配置接口
 	apiServer := api.NewServer(cfgMgr, client, startup.JavaURL)
