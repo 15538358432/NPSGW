@@ -9,10 +9,10 @@ import (
 
 	"nps/internal/api"
 	"nps/internal/config"
+	"nps/internal/nps"
 	"nps/internal/nsqx"
 	"nps/internal/store"
 	"nps/internal/syncer"
-	"nps/internal/nps"
 )
 
 func main() {
@@ -88,8 +88,12 @@ func main() {
 		startup.Sync.Orgs.GetPageSize(), startup.Sync.Orgs.Orderby, startup.Sync.Orgs.Filters,
 		startup.Sync.Users.GetPageSize(), startup.Sync.Users.Orderby, startup.Sync.Users.Filters)
 
-	// 启动后主动拉取一次全量组织/用户数据（异步执行，不阻塞启动流程）
-	go s.SyncAll()
+	// 启动后主动拉取一次全量组织/用户数据（异步执行，不阻塞启动流程）；仅当配置 pull_on_start: true 时启用
+	if startup.PullOnStart {
+		go s.SyncAll()
+	} else {
+		log.Printf("[init] 未配置 pull_on_start，跳过启动时主动拉取全量数据，等待 rs 模块的拉取指令")
+	}
 
 	// 订阅 rs 模块的 pull 指令
 	consumer, err := nsqx.NewConsumer(

@@ -20,11 +20,11 @@ const (
 
 // NSQ topic 常量（约定写死，不在配置中出现）
 const (
-	TopicPull      = "rs_pull_nps_data"             // 订阅：接收 rs 模块的拉取指令
-	TopicAccessCfg = "rs_nps_access_configuration"  // 订阅：接收 rs 模块的配置变更
+	TopicPull      = "rs_pull_nps_data"            // 订阅：接收 rs 模块的拉取指令
+	TopicAccessCfg = "rs_nps_access_configuration" // 订阅：接收 rs 模块的配置变更
 	TopicOrg       = "nps_organ_info"              // 发布：组织数据
 	TopicUser      = "nps_user_info"               // 发布：用户数据
-	PullChannel    = "nps"                          // 订阅 channel
+	PullChannel    = "nps"                         // 订阅 channel
 )
 
 // Token 存储常量
@@ -46,6 +46,8 @@ type StartupConfig struct {
 	Platform string `yaml:"platform" json:"platform"`
 	// Sync 分页查询配置（区分组织和用户，仅配置文件读取，不走 Redis）
 	Sync SyncConfig `yaml:"sync" json:"sync"`
+	// PullOnStart true 时服务启动后主动拉取一次全量组织/用户数据；false 时仅等待 rs 模块的拉取指令
+	PullOnStart bool `yaml:"pull_on_start" json:"pullOnStart"`
 }
 
 // SyncConfig 分页查询配置（区分组织/用户，各自独立）
@@ -79,10 +81,10 @@ type BizConfig struct {
 	// SSOURL 获取 access_token 的接口前缀，完整地址为 {SSOURL}/oauth2/token
 	SSOURL string `yaml:"sso_url" json:"ssoUrl"`
 	// IAMAPIURL 组织/用户信息接口前缀，完整地址为 {IAMAPIURL}/api/sync/orgs、{IAMAPIURL}/api/sync/users
-	IAMAPIURL         string `yaml:"iamapi_url" json:"iamapiUrl"`
-	ClientID          string `yaml:"client_id" json:"clientId"`
-	ClientSecret      string `yaml:"client_secret" json:"clientSecret"`
-	InsecureSkipVerify bool  `yaml:"insecure_skip_verify" json:"insecureSkipVerify"`
+	IAMAPIURL          string `yaml:"iamapi_url" json:"iamapiUrl"`
+	ClientID           string `yaml:"client_id" json:"clientId"`
+	ClientSecret       string `yaml:"client_secret" json:"clientSecret"`
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify" json:"insecureSkipVerify"`
 }
 
 // RedisConfig Redis 连接配置（启动配置）
@@ -190,9 +192,9 @@ func BizConfigFromConnectConfig(jsonStr string) (*BizConfig, error) {
 		return nil, fmt.Errorf("解析 connectConfig 失败: %w", err)
 	}
 	return &BizConfig{
-		SSOURL:        p.SSOURL,
-		IAMAPIURL:     p.IAMAPIURL,
-		ClientID:      p.ClientID,
-		ClientSecret:  p.ClientSecret,
+		SSOURL:       p.SSOURL,
+		IAMAPIURL:    p.IAMAPIURL,
+		ClientID:     p.ClientID,
+		ClientSecret: p.ClientSecret,
 	}, nil
 }
