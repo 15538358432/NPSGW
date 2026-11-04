@@ -21,7 +21,7 @@ const (
 // NSQ topic 常量（约定写死，不在配置中出现）
 const (
 	TopicPull      = "rs_pull_nps_data"            // 订阅：接收 rs 模块的拉取指令
-	TopicAccessCfg = "rs_nps_access_configuration" // 订阅：接收 rs 模块的配置变更
+	TopicAccessCfg = "rs_sdk_access_configuration" // 订阅：接收 rs 模块的配置变更
 	TopicOrg       = "nps_organ_info"              // 发布：组织数据
 	TopicUser      = "nps_user_info"               // 发布：用户数据
 	PullChannel    = "nps"                         // 订阅 channel

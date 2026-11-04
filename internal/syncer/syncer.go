@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"nps/internal/config"
-	"nps/internal/nsqx"
 	"nps/internal/nps"
+	"nps/internal/nsqx"
 )
 
 // pullMsg rs 模块发布到 pull_topic 的指令消息结构
@@ -144,6 +144,7 @@ func (s *Syncer) normalizeData(raw json.RawMessage) (json.RawMessage, int, error
 	}
 	return result, len(items), nil
 }
+
 // convertTimeField 将指定字段的时间从 ISO 8601 格式转为 "2006-01-02 15:04:05"
 // 支持格式: 2025-03-27T15:31:42.223+08:00 或 2025-03-27T15:31:42+08:00
 func (s *Syncer) convertTimeField(item map[string]interface{}, field string) {
@@ -249,6 +250,7 @@ func (s *Syncer) handleOrgan() error {
 	log.Printf("[pull] param=organ 分页拉取完成，共 %d 页，total=%d 条", page, total)
 	return nil
 }
+
 // handleUser 分页拉取用户信息并透传
 func (s *Syncer) handleUser() error {
 	sp := s.syncConfig.Users
@@ -297,13 +299,13 @@ func (s *Syncer) handleUser() error {
 
 // accessCfgMsg rs 模块发布到配置变更 topic 的消息结构
 type accessCfgMsg struct {
-	Name          string `json:"name"`          // 对接平台名称
-	ConnectConfig string `json:"connectConfig"` // 连接配置 JSON 字符串
-	Type          string `json:"type"`          // 操作类型: del/add/update/getAll
+	Platform      string          `json:"platform"`      // 对接平台标识，与启动配置匹配
+	ConnectConfig json.RawMessage `json:"connectConfig"` // 连接配置 JSON 对象，匹配平台后再解析
+	Type          string          `json:"type"`          // 操作类型: del/add/update/getAll
 }
 
 // HandleAccessConfig 处理来自 rs 模块的配置变更消息
-// 解析 connectConfig，将不为空的字段更新到 Redis
+// 仅在 platform 与启动配置一致时解析 connectConfig，将不为空的字段更新到 Redis
 func (s *Syncer) HandleAccessConfig(body []byte) error {
 	var msg accessCfgMsg
 	if err := json.Unmarshal(body, &msg); err != nil {
@@ -311,14 +313,19 @@ func (s *Syncer) HandleAccessConfig(body []byte) error {
 		return nil
 	}
 
-	log.Printf("[cfg] 收到配置变更: name=%s, type=%s, connectConfig=%s", msg.Name, msg.Type, msg.ConnectConfig)
+	if msg.Platform == "" || msg.Platform != s.platform {
+		log.Printf("[cfg] 忽略其他平台的配置变更: platform=%s, local_platform=%s", msg.Platform, s.platform)
+		return nil
+	}
 
-	if strings.TrimSpace(msg.ConnectConfig) == "" {
+	log.Printf("[cfg] 收到配置变更: platform=%s, type=%s", msg.Platform, msg.Type)
+
+	if len(msg.ConnectConfig) == 0 || bytes.Equal(bytes.TrimSpace(msg.ConnectConfig), []byte("null")) {
 		log.Printf("[cfg] connectConfig 为空，跳过")
 		return nil
 	}
 
-	biz, err := config.BizConfigFromConnectConfig(msg.ConnectConfig)
+	biz, err := config.BizConfigFromConnectConfig(string(msg.ConnectConfig))
 	if err != nil {
 		log.Printf("[cfg] 解析 connectConfig 失败: %v", err)
 		return nil
