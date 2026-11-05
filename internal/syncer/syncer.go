@@ -71,9 +71,8 @@ func (s *Syncer) extractParam(body []byte) string {
 	return ""
 }
 
-// normalizeItems 将 API 返回的原始数据解析为列表格式，并为每项添加 optType、platform、转换时间格式
-// 兼容 API 返回 {data: [...]} 包装、单个对象、或纯数组三种情况
-func (s *Syncer) normalizeItems(raw json.RawMessage) ([]map[string]interface{}, error) {
+// extractItems 兼容 API 返回的 data 包装、单个对象或纯数组，提取原始数据列表。
+func extractItems(raw json.RawMessage) ([]map[string]interface{}, error) {
 	var items []map[string]interface{}
 
 	// 先尝试解析为列表
@@ -107,6 +106,15 @@ func (s *Syncer) normalizeItems(raw json.RawMessage) ([]map[string]interface{}, 
 		}
 	}
 
+	return items, nil
+}
+
+// normalizeItems 为用户数据添加 optType、platform，并转换时间格式。
+func (s *Syncer) normalizeItems(raw json.RawMessage) ([]map[string]interface{}, error) {
+	items, err := extractItems(raw)
+	if err != nil {
+		return nil, err
+	}
 	if len(items) == 0 {
 		log.Printf("[normalizeData] 数据为空，跳过处理")
 		return items, nil
@@ -130,6 +138,42 @@ func (s *Syncer) normalizeItems(raw json.RawMessage) ([]map[string]interface{}, 
 		}
 	}
 	return items, nil
+}
+
+// normalizeOrganItems 将三方组织字段映射为 RS 约定的固定字段。
+func (s *Syncer) normalizeOrganItems(raw json.RawMessage) ([]map[string]interface{}, error) {
+	items, err := extractItems(raw)
+	if err != nil {
+		return nil, err
+	}
+	orgs := make([]map[string]interface{}, 0, len(items))
+	for i, item := range items {
+		enabled, ok := item["enabled"].(bool)
+		if !ok {
+			return nil, fmt.Errorf("组织第%d条数据的 enabled 字段必须为 bool 类型", i+1)
+		}
+		createdAt, ok := item["createAt"]
+		if !ok {
+			createdAt = item["createdAt"]
+		}
+		updatedAt, ok := item["updateAt"]
+		if !ok {
+			updatedAt = item["updatedAt"]
+		}
+		org := map[string]interface{}{
+			"id":          item["id"],
+			"name":        item["name"],
+			"code":        item["code"],
+			"parentId":    item["parentId"],
+			"enable":      enabled,
+			"createdTime": createdAt,
+			"updatedTime": updatedAt,
+		}
+		s.convertTimeField(org, "createdTime")
+		s.convertTimeField(org, "updatedTime")
+		orgs = append(orgs, org)
+	}
+	return orgs, nil
 }
 
 // normalizeData 将归一化后的列表序列化为 JSON 并返回条数（按页发布场景使用）
@@ -183,7 +227,7 @@ func (s *Syncer) SyncAll() {
 	log.Printf("[startup] 主动全量拉取结束")
 }
 
-// handleOrgan 分页拉取组织机构数据并透传
+// handleOrgan 分页拉取组织机构数据，映射字段并按 RS 协议封装发送
 // push_organInfo_all=true 时：分页拉取但先累积，全部拉完后合并为一条消息一次性转发；否则按页转发
 func (s *Syncer) handleOrgan() error {
 	sp := s.syncConfig.Orgs
@@ -200,7 +244,7 @@ func (s *Syncer) handleOrgan() error {
 			return fmt.Errorf("拉取组织第%d页失败: %w", page, err)
 		}
 
-		items, err := s.normalizeItems(raw)
+		items, err := s.normalizeOrganItems(raw)
 		if err != nil {
 			return fmt.Errorf("转换组织数据格式失败(第%d页): %w", page, err)
 		}
@@ -216,7 +260,7 @@ func (s *Syncer) handleOrgan() error {
 			// 累积模式：先不发布，等全部拉完后一次性转发
 			all = append(all, items...)
 		} else {
-			normalized, err := json.Marshal(items)
+			normalized, err := s.marshalOrganData(items)
 			if err != nil {
 				return fmt.Errorf("序列化组织数据失败(第%d页): %w", page, err)
 			}
@@ -238,7 +282,7 @@ func (s *Syncer) handleOrgan() error {
 	}
 
 	if s.syncConfig.PushOrganAll {
-		normalized, err := json.Marshal(all)
+		normalized, err := s.marshalOrganData(all)
 		if err != nil {
 			return fmt.Errorf("序列化组织数据失败: %w", err)
 		}
@@ -249,6 +293,20 @@ func (s *Syncer) handleOrgan() error {
 
 	log.Printf("[pull] param=organ 分页拉取完成，共 %d 页，total=%d 条", page, total)
 	return nil
+}
+
+// marshalOrganData 将组织列表封装为 RS 约定的 platformId/data 消息。
+func (s *Syncer) marshalOrganData(items []map[string]interface{}) (json.RawMessage, error) {
+	if items == nil {
+		items = make([]map[string]interface{}, 0)
+	}
+	return json.Marshal(struct {
+		PlatformID string                   `json:"platformId"`
+		Data       []map[string]interface{} `json:"data"`
+	}{
+		PlatformID: s.platform,
+		Data:       items,
+	})
 }
 
 // handleUser 分页拉取用户信息并透传
@@ -371,7 +429,7 @@ func prettyJSON(raw json.RawMessage) string {
 	return buf.String()
 }
 
-// publishRaw 向指定 topic 发布原始 JSON 数据（已归一化为列表格式）
+// publishRaw 向指定 topic 发布 JSON 数据（组织为封装对象，用户为列表）
 // count 由 normalizeData 直接传入，避免在此处二次反序列化
 func (s *Syncer) publishRaw(topic string, data json.RawMessage, dataType string, count int) error {
 	if s.producer == nil || topic == "" {

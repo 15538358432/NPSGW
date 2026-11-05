@@ -22,7 +22,7 @@ const (
 const (
 	TopicPull      = "rs_pull_nps_data"            // 订阅：接收 rs 模块的拉取指令
 	TopicAccessCfg = "rs_sdk_access_configuration" // 订阅：接收 rs 模块的配置变更
-	TopicOrg       = "nps_organ_info"              // 发布：组织数据
+	TopicOrg       = "sdk_organ_info"              // 发布：组织数据
 	TopicUser      = "nps_user_info"               // 发布：用户数据
 	PullChannel    = "nps"                         // 订阅 channel
 )
@@ -42,7 +42,7 @@ type StartupConfig struct {
 	JavaURL string `yaml:"java_url" json:"java_url"`
 	// NPS 首次启动时作为业务配置的初始值写入 Redis，后续从 Redis 加载
 	NPS BizConfig `yaml:"nps" json:"nps"`
-	// Platform 对接平台标识，拼接到每条数据的 platform 字段（仅配置文件读取，不走 Redis）
+	// Platform 对接平台标识，用于配置消息匹配、组织消息的 platformId 及用户数据的 platform（仅配置文件读取，不走 Redis）
 	Platform string `yaml:"platform" json:"platform"`
 	// Sync 分页查询配置（区分组织和用户，仅配置文件读取，不走 Redis）
 	Sync SyncConfig `yaml:"sync" json:"sync"`
