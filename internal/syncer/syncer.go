@@ -109,35 +109,33 @@ func extractItems(raw json.RawMessage) ([]map[string]interface{}, error) {
 	return items, nil
 }
 
-// normalizeItems 为用户数据添加 optType、platform，并转换时间格式。
-func (s *Syncer) normalizeItems(raw json.RawMessage) ([]map[string]interface{}, error) {
+// normalizeUserItems 将三方用户字段映射为 RS 约定的固定字段。
+func (s *Syncer) normalizeUserItems(raw json.RawMessage) ([]map[string]interface{}, error) {
 	items, err := extractItems(raw)
 	if err != nil {
 		return nil, err
 	}
-	if len(items) == 0 {
-		log.Printf("[normalizeData] 数据为空，跳过处理")
-		return items, nil
-	}
-
-	log.Printf("[normalizeData] 提取到 %d 条数据，开始添加 optType/platform 并转换时间格式", len(items))
-
-	// 为每项添加 optType、platform，并转换时间字段格式
-	for i := range items {
-		items[i]["optType"] = "all"
-		if s.platform != "" {
-			items[i]["platform"] = s.platform
+	users := make([]map[string]interface{}, 0, len(items))
+	for i, item := range items {
+		enabled, ok := item["enabled"].(bool)
+		if !ok {
+			return nil, fmt.Errorf("用户第%d条数据的 enabled 字段必须为 bool 类型", i+1)
 		}
-		s.convertTimeField(items[i], "createdAt")
-		s.convertTimeField(items[i], "updatedAt")
-
-		// 只打印第一条的转换结果
-		if i == 0 {
-			log.Printf("[normalizeData] 第1条 createdAt=%v, updatedAt=%v",
-				items[i]["createdAt"], items[i]["updatedAt"])
+		user := map[string]interface{}{
+			"id":          item["id"],
+			"name":        item["name"],
+			"code":        item["code"],
+			"organId":     item["orgId"],
+			"organName":   item["orgName"],
+			"enable":      enabled,
+			"createdTime": item["createdAt"],
+			"updatedTime": item["updatedAt"],
 		}
+		s.convertTimeField(user, "createdTime")
+		s.convertTimeField(user, "updatedTime")
+		users = append(users, user)
 	}
-	return items, nil
+	return users, nil
 }
 
 // normalizeOrganItems 将三方组织字段映射为 RS 约定的固定字段。
@@ -152,22 +150,14 @@ func (s *Syncer) normalizeOrganItems(raw json.RawMessage) ([]map[string]interfac
 		if !ok {
 			return nil, fmt.Errorf("组织第%d条数据的 enabled 字段必须为 bool 类型", i+1)
 		}
-		createdAt, ok := item["createAt"]
-		if !ok {
-			createdAt = item["createdAt"]
-		}
-		updatedAt, ok := item["updateAt"]
-		if !ok {
-			updatedAt = item["updatedAt"]
-		}
 		org := map[string]interface{}{
 			"id":          item["id"],
 			"name":        item["name"],
 			"code":        item["code"],
 			"parentId":    item["parentId"],
 			"enable":      enabled,
-			"createdTime": createdAt,
-			"updatedTime": updatedAt,
+			"createdTime": item["createdAt"],
+			"updatedTime": item["updatedAt"],
 		}
 		s.convertTimeField(org, "createdTime")
 		s.convertTimeField(org, "updatedTime")
@@ -176,13 +166,13 @@ func (s *Syncer) normalizeOrganItems(raw json.RawMessage) ([]map[string]interfac
 	return orgs, nil
 }
 
-// normalizeData 将归一化后的列表序列化为 JSON 并返回条数（按页发布场景使用）
-func (s *Syncer) normalizeData(raw json.RawMessage) (json.RawMessage, int, error) {
-	items, err := s.normalizeItems(raw)
+// normalizeUserData 映射并封装用户数据，返回 JSON 消息和条数。
+func (s *Syncer) normalizeUserData(raw json.RawMessage) (json.RawMessage, int, error) {
+	items, err := s.normalizeUserItems(raw)
 	if err != nil {
 		return nil, 0, err
 	}
-	result, err := json.Marshal(items)
+	result, err := s.marshalSyncData(items)
 	if err != nil {
 		return nil, 0, fmt.Errorf("序列化数据失败: %v", err)
 	}
@@ -260,7 +250,7 @@ func (s *Syncer) handleOrgan() error {
 			// 累积模式：先不发布，等全部拉完后一次性转发
 			all = append(all, items...)
 		} else {
-			normalized, err := s.marshalOrganData(items)
+			normalized, err := s.marshalSyncData(items)
 			if err != nil {
 				return fmt.Errorf("序列化组织数据失败(第%d页): %w", page, err)
 			}
@@ -282,7 +272,7 @@ func (s *Syncer) handleOrgan() error {
 	}
 
 	if s.syncConfig.PushOrganAll {
-		normalized, err := s.marshalOrganData(all)
+		normalized, err := s.marshalSyncData(all)
 		if err != nil {
 			return fmt.Errorf("序列化组织数据失败: %w", err)
 		}
@@ -295,8 +285,8 @@ func (s *Syncer) handleOrgan() error {
 	return nil
 }
 
-// marshalOrganData 将组织列表封装为 RS 约定的 platformId/data 消息。
-func (s *Syncer) marshalOrganData(items []map[string]interface{}) (json.RawMessage, error) {
+// marshalSyncData 将组织或用户列表封装为 RS 约定的 platformId/data 消息。
+func (s *Syncer) marshalSyncData(items []map[string]interface{}) (json.RawMessage, error) {
 	if items == nil {
 		items = make([]map[string]interface{}, 0)
 	}
@@ -309,7 +299,7 @@ func (s *Syncer) marshalOrganData(items []map[string]interface{}) (json.RawMessa
 	})
 }
 
-// handleUser 分页拉取用户信息并透传
+// handleUser 分页拉取用户信息，映射字段并按 RS 协议封装发送
 func (s *Syncer) handleUser() error {
 	sp := s.syncConfig.Users
 	size := sp.GetPageSize()
@@ -324,8 +314,8 @@ func (s *Syncer) handleUser() error {
 			return fmt.Errorf("拉取用户第%d页失败: %w", page, err)
 		}
 
-		// 归一化 + 发布（复用条数，避免二次解析）
-		normalized, cnt, err := s.normalizeData(raw)
+		// 映射并封装数据，复用条数，避免二次解析。
+		normalized, cnt, err := s.normalizeUserData(raw)
 		if err != nil {
 			return fmt.Errorf("转换用户数据格式失败(第%d页): %w", page, err)
 		}
@@ -429,8 +419,8 @@ func prettyJSON(raw json.RawMessage) string {
 	return buf.String()
 }
 
-// publishRaw 向指定 topic 发布 JSON 数据（组织为封装对象，用户为列表）
-// count 由 normalizeData 直接传入，避免在此处二次反序列化
+// publishRaw 向指定 topic 发布按 RS 协议封装的 JSON 数据。
+// count 由调用方直接传入，避免在此处二次反序列化。
 func (s *Syncer) publishRaw(topic string, data json.RawMessage, dataType string, count int) error {
 	if s.producer == nil || topic == "" {
 		log.Printf("[NSQ] 跳过 %s 透传（producer 未启用或 topic 为空）", dataType)
