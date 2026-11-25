@@ -28,11 +28,19 @@ type Syncer struct {
 	cfgMgr     *config.Manager
 	platform   string // 对接平台标识，来自配置文件，不走 Redis
 	syncConfig config.SyncConfig
+	nsqConfig  config.NSQConfig
 }
 
 // New 创建 Syncer
-func New(client *nps.Client, producer *nsqx.Producer, cfgMgr *config.Manager, platform string, syncConfig config.SyncConfig) *Syncer {
-	return &Syncer{client: client, producer: producer, cfgMgr: cfgMgr, platform: platform, syncConfig: syncConfig}
+func New(client *nps.Client, producer *nsqx.Producer, cfgMgr *config.Manager, startup *config.StartupConfig) *Syncer {
+	return &Syncer{
+		client:     client,
+		producer:   producer,
+		cfgMgr:     cfgMgr,
+		platform:   startup.Platform,
+		syncConfig: startup.Sync,
+		nsqConfig:  startup.NSQ,
+	}
 }
 
 // HandlePull 处理一条来自 rs 模块的 pull 指令消息
@@ -254,7 +262,7 @@ func (s *Syncer) handleOrgan() error {
 			if err != nil {
 				return fmt.Errorf("序列化组织数据失败(第%d页): %w", page, err)
 			}
-			if err := s.publishRaw(config.TopicOrg, normalized, "org", cnt); err != nil {
+			if err := s.publishRaw(s.nsqConfig.TopicOrg, normalized, "org", cnt); err != nil {
 				return fmt.Errorf("透传组织数据失败(第%d页): %w", page, err)
 			}
 		}
@@ -276,7 +284,7 @@ func (s *Syncer) handleOrgan() error {
 		if err != nil {
 			return fmt.Errorf("序列化组织数据失败: %w", err)
 		}
-		if err := s.publishRaw(config.TopicOrg, normalized, "org", total); err != nil {
+		if err := s.publishRaw(s.nsqConfig.TopicOrg, normalized, "org", total); err != nil {
 			return fmt.Errorf("透传组织数据失败: %w", err)
 		}
 	}
@@ -326,7 +334,7 @@ func (s *Syncer) handleUser() error {
 			break
 		}
 
-		if err := s.publishRaw(config.TopicUser, normalized, "user", cnt); err != nil {
+		if err := s.publishRaw(s.nsqConfig.TopicUser, normalized, "user", cnt); err != nil {
 			return fmt.Errorf("透传用户数据失败(第%d页): %w", page, err)
 		}
 

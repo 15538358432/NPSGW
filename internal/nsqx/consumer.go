@@ -1,4 +1,4 @@
-﻿package nsqx
+package nsqx
 
 import (
 	"fmt"
@@ -13,17 +13,17 @@ type Handler func(body []byte) error
 
 // Consumer 封装 go-nsq consumer：订阅指定 topic/channel 并交由 Handler 处理
 type Consumer struct {
-	c  *nsq.Consumer
+	c *nsq.Consumer
 }
 
 // NewConsumer 创建 consumer；addr 为 nsqd 的 TCP 地址（如 127.0.0.1:4150）
-// topic、channel 由调用方传入；channel 为空时使用默认值
+// topic、channel 由调用方传入，均不能为空。
 func NewConsumer(addr, topic, channel string, handler Handler) (*Consumer, error) {
 	if topic == "" {
 		return nil, fmt.Errorf("NSQ pull_topic 不能为空")
 	}
 	if channel == "" {
-		channel = "nps"
+		return nil, fmt.Errorf("NSQ channel 不能为空")
 	}
 	cfg := nsq.NewConfig()
 	// 单条消息处理超时：120 秒（拉取接口可能慢）

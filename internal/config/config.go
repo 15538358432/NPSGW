@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -16,15 +17,6 @@ const (
 	OrgPath      = "/api/sync/orgs"                        // 拉取组织机构信息
 	UserPath     = "/api/sync/users"                       // 拉取用户信息
 	QueryCfgPath = "/v1/rsNpsAccessConfiguration/queryAll" // 从 Java 平台拉取初始配置
-)
-
-// NSQ topic 常量（约定写死，不在配置中出现）
-const (
-	TopicPull      = "rs_pull_nps_data"            // 订阅：接收 rs 模块的拉取指令
-	TopicAccessCfg = "rs_sdk_access_configuration" // 订阅：接收 rs 模块的配置变更
-	TopicOrg       = "sdk_organ_info"              // 发布：组织数据
-	TopicUser      = "sdk_user_info"               // 发布：用户数据
-	PullChannel    = "nps"                         // 订阅 channel
 )
 
 // Token 存储常量
@@ -96,7 +88,12 @@ type RedisConfig struct {
 
 // NSQConfig NSQ 连接配置（启动配置）
 type NSQConfig struct {
-	NSQDAddr string `yaml:"nsqd_addr" json:"nsqd_addr"`
+	NSQDAddr       string `yaml:"nsqd_addr" json:"nsqd_addr"`
+	TopicPull      string `yaml:"topic_pull" json:"topic_pull"`
+	TopicAccessCfg string `yaml:"topic_access_cfg" json:"topic_access_cfg"`
+	TopicOrg       string `yaml:"topic_org" json:"topic_org"`
+	TopicUser      string `yaml:"topic_user" json:"topic_user"`
+	PullChannel    string `yaml:"pull_channel" json:"pull_channel"`
 }
 
 // APIConfig HTTP API 服务配置（启动配置）
@@ -130,6 +127,21 @@ func (c *StartupConfig) validate() error {
 	}
 	if c.NSQ.NSQDAddr == "" {
 		return fmt.Errorf("配置缺少 nsq.nsqd_addr")
+	}
+	nsqFields := []struct {
+		key   string
+		value string
+	}{
+		{"topic_pull", c.NSQ.TopicPull},
+		{"topic_access_cfg", c.NSQ.TopicAccessCfg},
+		{"topic_org", c.NSQ.TopicOrg},
+		{"topic_user", c.NSQ.TopicUser},
+		{"pull_channel", c.NSQ.PullChannel},
+	}
+	for _, field := range nsqFields {
+		if strings.TrimSpace(field.value) == "" {
+			return fmt.Errorf("配置缺少 nsq.%s", field.key)
+		}
 	}
 	if c.Platform == "" {
 		return fmt.Errorf("配置缺少 platform")

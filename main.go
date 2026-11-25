@@ -79,10 +79,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("连接 NSQ producer 失败: %v", err)
 	}
-	log.Printf("NSQ producer 连接成功，组织 topic=%s, 用户 topic=%s", config.TopicOrg, config.TopicUser)
+	log.Printf("NSQ producer 连接成功，组织 topic=%s, 用户 topic=%s", startup.NSQ.TopicOrg, startup.NSQ.TopicUser)
 	defer producer.Stop()
 
-	s := syncer.New(client, producer, cfgMgr, startup.Platform, startup.Sync)
+	s := syncer.New(client, producer, cfgMgr, startup)
 	log.Printf("[init] 平台标识: %s", startup.Platform)
 	log.Printf("[init] 分页配置: orgs(page_size=%d, orderby=%q, filters=%q), users(page_size=%d, orderby=%q, filters=%q)",
 		startup.Sync.Orgs.GetPageSize(), startup.Sync.Orgs.Orderby, startup.Sync.Orgs.Filters,
@@ -98,24 +98,24 @@ func main() {
 	// 订阅 rs 模块的 pull 指令
 	consumer, err := nsqx.NewConsumer(
 		startup.NSQ.NSQDAddr,
-		config.TopicPull,
-		config.PullChannel,
+		startup.NSQ.TopicPull,
+		startup.NSQ.PullChannel,
 		s.HandlePull,
 	)
 	if err != nil {
-		log.Fatalf("订阅 NSQ pull_topic(%s) 失败: %v", config.TopicPull, err)
+		log.Fatalf("订阅 NSQ pull_topic(%s) 失败: %v", startup.NSQ.TopicPull, err)
 	}
 	defer consumer.Stop()
 
 	// 订阅 rs 模块的配置变更
 	cfgConsumer, err := nsqx.NewConsumer(
 		startup.NSQ.NSQDAddr,
-		config.TopicAccessCfg,
-		config.PullChannel,
+		startup.NSQ.TopicAccessCfg,
+		startup.NSQ.PullChannel,
 		s.HandleAccessConfig,
 	)
 	if err != nil {
-		log.Fatalf("订阅 NSQ 配置变更 topic(%s) 失败: %v", config.TopicAccessCfg, err)
+		log.Fatalf("订阅 NSQ 配置变更 topic(%s) 失败: %v", startup.NSQ.TopicAccessCfg, err)
 	}
 	defer cfgConsumer.Stop()
 
@@ -131,7 +131,7 @@ func main() {
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
 	log.Printf("NPSGW 已就绪，等待 rs 模块消息... (拉取指令: %s, 配置变更: %s, HTTP 接口: :%d)",
-		config.TopicPull, config.TopicAccessCfg, startup.API.Port)
+		startup.NSQ.TopicPull, startup.NSQ.TopicAccessCfg, startup.API.Port)
 	<-stop
 	log.Println("收到退出信号，服务停止")
 }
