@@ -9,6 +9,7 @@ import (
 
 	"nps/internal/api"
 	"nps/internal/config"
+	"nps/internal/logfile"
 	"nps/internal/nps"
 	"nps/internal/nsqx"
 	"nps/internal/store"
@@ -24,13 +25,25 @@ func main() {
 	// 加载启动配置（Redis/NSQ/API/Java 地址，修改需重启）
 	startup, err := config.LoadStartup(*configPath)
 	if err != nil {
-		log.Fatalf("加载启动配置失败: %v", err)
+		log.Fatalf("[ERROR] 加载启动配置失败: %v", err)
 	}
+
+	logFile, err := logfile.Open(startup.Log.Dir, startup.Log.MaxSizeMB*1024*1024, startup.Log.MaxFiles)
+	if err != nil {
+		log.Fatalf("[ERROR] 初始化日志文件失败: %v", err)
+	}
+	log.SetOutput(logFile)
+	defer func() {
+		log.SetOutput(os.Stderr)
+		if err := logFile.Close(); err != nil {
+			log.Printf("[ERROR] 关闭日志文件失败: %v", err)
+		}
+	}()
 
 	// 连接 Redis
 	redisStore, err := store.NewRedis(startup.Redis, "nps_config")
 	if err != nil {
-		log.Fatalf("连接 Redis 失败: %v", err)
+		log.Fatalf("[ERROR] 连接 Redis 失败: %v", err)
 	}
 	defer redisStore.Close()
 
@@ -38,7 +51,7 @@ func main() {
 	initialBiz := &startup.NPS
 	cfgMgr, err := config.NewManager(startup, redisStore, initialBiz)
 	if err != nil {
-		log.Fatalf("创建配置管理器失败: %v", err)
+		log.Fatalf("[ERROR] 创建配置管理器失败: %v", err)
 	}
 
 	client := nps.NewClient(cfgMgr, redisStore)
@@ -48,7 +61,7 @@ func main() {
 		log.Printf("[init] 正在从 RS 模块拉取初始配置: %s%s", startup.JavaURL, config.QueryCfgPath)
 		biz, err := client.FetchBizConfig(startup.JavaURL)
 		if err != nil {
-			log.Printf("[init] 拉取初始配置失败，将使用 Redis/配置文件中的现有配置: %v", err)
+			log.Printf("[ERROR] [init] 拉取初始配置失败，将使用 Redis/配置文件中的现有配置: %v", err)
 		} else {
 			fieldMap := map[string]string{
 				"clientId":     biz.ClientID,
@@ -57,7 +70,7 @@ func main() {
 				"iamapiUrl":    biz.IAMAPIURL,
 			}
 			if err := cfgMgr.UpdateFields(fieldMap); err != nil {
-				log.Printf("[init] 保存初始配置到 Redis 失败: %v", err)
+				log.Printf("[ERROR] [init] 保存初始配置到 Redis 失败: %v", err)
 			} else {
 				log.Printf("[init] 初始配置拉取成功并保存到 Redis")
 			}
@@ -68,7 +81,7 @@ func main() {
 
 	// 预热 token
 	if _, err := client.EnsureToken(); err != nil {
-		log.Printf("启动时获取平台 token 失败，将在处理消息时重试: %v", err)
+		log.Printf("[ERROR] 启动时获取平台 token 失败，将在处理消息时重试: %v", err)
 	} else {
 		log.Printf("平台 token 已就绪，Redis key: %s", config.TokenKey)
 	}
@@ -77,7 +90,7 @@ func main() {
 	log.Printf("NSQ 已配置，正在连接 nsqd(%s)...", startup.NSQ.NSQDAddr)
 	producer, err := nsqx.NewProducer(startup.NSQ.NSQDAddr)
 	if err != nil {
-		log.Fatalf("连接 NSQ producer 失败: %v", err)
+		log.Fatalf("[ERROR] 连接 NSQ producer 失败: %v", err)
 	}
 	log.Printf("NSQ producer 连接成功，组织 topic=%s, 用户 topic=%s", startup.NSQ.TopicOrg, startup.NSQ.TopicUser)
 	defer producer.Stop()
@@ -103,7 +116,7 @@ func main() {
 		s.HandlePull,
 	)
 	if err != nil {
-		log.Fatalf("订阅 NSQ pull_topic(%s) 失败: %v", startup.NSQ.TopicPull, err)
+		log.Fatalf("[ERROR] 订阅 NSQ pull_topic(%s) 失败: %v", startup.NSQ.TopicPull, err)
 	}
 	defer consumer.Stop()
 
@@ -115,7 +128,7 @@ func main() {
 		s.HandleAccessConfig,
 	)
 	if err != nil {
-		log.Fatalf("订阅 NSQ 配置变更 topic(%s) 失败: %v", startup.NSQ.TopicAccessCfg, err)
+		log.Fatalf("[ERROR] 订阅 NSQ 配置变更 topic(%s) 失败: %v", startup.NSQ.TopicAccessCfg, err)
 	}
 	defer cfgConsumer.Stop()
 
@@ -123,7 +136,7 @@ func main() {
 	apiServer := api.NewServer(cfgMgr, client, startup.JavaURL)
 	go func() {
 		if err := apiServer.ListenAndServe(startup.API.Port); err != nil {
-			log.Fatalf("HTTP API 服务启动失败: %v", err)
+			log.Fatalf("[ERROR] HTTP API 服务启动失败: %v", err)
 		}
 	}()
 

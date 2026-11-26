@@ -210,17 +210,17 @@ func (s *Syncer) convertTimeField(item map[string]interface{}, field string) {
 		return
 	}
 
-	log.Printf("[time] 时间格式转换失败: field=%s, value=%s", field, str)
+	log.Printf("[ERROR] [time] 时间格式转换失败: field=%s, value=%s", field, str)
 }
 
 // SyncAll 启动时主动拉取一次全量组织和用户数据
 func (s *Syncer) SyncAll() {
 	log.Printf("[startup] 开始主动拉取全量组织/用户数据...")
 	if err := s.handleOrgan(); err != nil {
-		log.Printf("[startup] 拉取组织数据失败，后续可等待拉取指令重试: %v", err)
+		log.Printf("[ERROR] [startup] 拉取组织数据失败，后续可等待拉取指令重试: %v", err)
 	}
 	if err := s.handleUser(); err != nil {
-		log.Printf("[startup] 拉取用户数据失败，后续可等待拉取指令重试: %v", err)
+		log.Printf("[ERROR] [startup] 拉取用户数据失败，后续可等待拉取指令重试: %v", err)
 	}
 	log.Printf("[startup] 主动全量拉取结束")
 }
@@ -241,6 +241,7 @@ func (s *Syncer) handleOrgan() error {
 		if err != nil {
 			return fmt.Errorf("拉取组织第%d页失败: %w", page, err)
 		}
+		//log.Printf("[pull] platform=%s param=organ page=%d 三方原始响应:\n%s", s.platform, page, prettyJSON(raw))
 
 		items, err := s.normalizeOrganItems(raw)
 		if err != nil {
@@ -321,6 +322,7 @@ func (s *Syncer) handleUser() error {
 		if err != nil {
 			return fmt.Errorf("拉取用户第%d页失败: %w", page, err)
 		}
+		//log.Printf("[pull] platform=%s param=user page=%d 三方原始响应:\n%s", s.platform, page, prettyJSON(raw))
 
 		// 映射并封装数据，复用条数，避免二次解析。
 		normalized, cnt, err := s.normalizeUserData(raw)
@@ -365,7 +367,7 @@ type accessCfgMsg struct {
 func (s *Syncer) HandleAccessConfig(body []byte) error {
 	var msg accessCfgMsg
 	if err := json.Unmarshal(body, &msg); err != nil {
-		log.Printf("[cfg] 解析配置变更消息失败: %v, 原始消息: %s", err, string(body))
+		log.Printf("[ERROR] [cfg] 解析配置变更消息失败: %v, 原始消息: %s", err, string(body))
 		return nil
 	}
 
@@ -383,7 +385,7 @@ func (s *Syncer) HandleAccessConfig(body []byte) error {
 
 	biz, err := config.BizConfigFromConnectConfig(string(msg.ConnectConfig))
 	if err != nil {
-		log.Printf("[cfg] 解析 connectConfig 失败: %v", err)
+		log.Printf("[ERROR] [cfg] 解析 connectConfig 失败: %v", err)
 		return nil
 	}
 
@@ -410,7 +412,7 @@ func (s *Syncer) HandleAccessConfig(body []byte) error {
 	log.Printf("[cfg] 待更新字段: %v", fieldMap)
 
 	if err := s.cfgMgr.UpdateFields(fieldMap); err != nil {
-		log.Printf("[cfg] 配置更新失败: %v", err)
+		log.Printf("[ERROR] [cfg] 配置更新失败: %v", err)
 		return fmt.Errorf("配置更新失败: %w", err)
 	}
 
@@ -435,9 +437,10 @@ func (s *Syncer) publishRaw(topic string, data json.RawMessage, dataType string,
 		return nil
 	}
 	payloadLen := len(data)
-	log.Printf("[NSQ] 开始发布: topic=%s, data_type=%s, 数据条数=%d, 消息大小=%d bytes", topic, dataType, count, payloadLen)
+	log.Printf("[NSQ] 开始发布: topic=%s, data_type=%s, 数据条数=%d, 消息大小=%d bytes\n%s",
+		topic, dataType, count, payloadLen, prettyJSON(data))
 	if err := s.producer.Publish(topic, data); err != nil {
-		log.Printf("[NSQ] 发布失败: topic=%s, data_type=%s, 错误=%v", topic, dataType, err)
+		log.Printf("[ERROR] [NSQ] 发布失败: topic=%s, data_type=%s, 错误=%v", topic, dataType, err)
 		return fmt.Errorf("发布 %s 消息失败: %w", dataType, err)
 	}
 	log.Printf("[NSQ] 发布完成: topic=%s, data_type=%s, 数据条数=%d, 消息大小=%d bytes", topic, dataType, count, payloadLen)

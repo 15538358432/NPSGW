@@ -30,6 +30,7 @@ type StartupConfig struct {
 	Redis RedisConfig `yaml:"redis" json:"redis"`
 	NSQ   NSQConfig   `yaml:"nsq" json:"nsq"`
 	API   APIConfig   `yaml:"api" json:"api"`
+	Log   LogConfig   `yaml:"log" json:"log"`
 	// JavaURL 我们 Java 平台地址，用于启动时拉取初始配置
 	JavaURL string `yaml:"java_url" json:"java_url"`
 	// NPS 首次启动时作为业务配置的初始值写入 Redis，后续从 Redis 加载
@@ -101,6 +102,13 @@ type APIConfig struct {
 	Port int `yaml:"port" json:"port"`
 }
 
+// LogConfig 控制日志目录、单文件大小和保留的文件总数。
+type LogConfig struct {
+	Dir       string `yaml:"dir" json:"dir"`
+	MaxSizeMB int64  `yaml:"max_size_mb" json:"max_size_mb"`
+	MaxFiles  int    `yaml:"max_files" json:"max_files"`
+}
+
 // LoadStartup 从指定路径加载启动配置 YAML
 func LoadStartup(path string) (*StartupConfig, error) {
 	data, err := os.ReadFile(path)
@@ -108,7 +116,9 @@ func LoadStartup(path string) (*StartupConfig, error) {
 		return nil, fmt.Errorf("读取配置文件 %s 失败: %w", path, err)
 	}
 
-	var cfg StartupConfig
+	cfg := StartupConfig{
+		Log: LogConfig{Dir: "/home/logs/nps", MaxSizeMB: 10, MaxFiles: 10},
+	}
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("解析配置文件 %s 失败: %w", path, err)
 	}
@@ -145,6 +155,15 @@ func (c *StartupConfig) validate() error {
 	}
 	if c.Platform == "" {
 		return fmt.Errorf("配置缺少 platform")
+	}
+	if strings.TrimSpace(c.Log.Dir) == "" {
+		return fmt.Errorf("配置缺少 log.dir")
+	}
+	if c.Log.MaxSizeMB < 1 || c.Log.MaxSizeMB > 10 {
+		return fmt.Errorf("log.max_size_mb 必须为 1 到 10")
+	}
+	if c.Log.MaxFiles < 1 || c.Log.MaxFiles > 10 {
+		return fmt.Errorf("log.max_files 必须为 1 到 10")
 	}
 	return nil
 }

@@ -43,7 +43,7 @@ func NewConsumer(addr, topic, channel string, handler Handler) (*Consumer, error
 		// 手动 DisableAutoResponse，按 handler 返回值决定是否 Finish/Requeue
 		m.DisableAutoResponse()
 		if err := handler(m.Body); err != nil {
-			log.Printf("[NSQ] 处理消息失败，稍后重试: topic=%s, body=%s, err=%v", topic, string(m.Body), err)
+			log.Printf("[ERROR] [NSQ] 处理消息失败，稍后重试: topic=%s, body=%s, err=%v", topic, string(m.Body), err)
 			m.RequeueWithoutBackoff(5 * time.Second)
 			return err
 		}

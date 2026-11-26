@@ -136,7 +136,7 @@ func (c *Client) fetchToken() (string, time.Duration, error) {
 
 	req, err := http.NewRequest(http.MethodPost, url, reqBody)
 	if err != nil {
-		log.Printf("[getToken] 请求构造失败: %v", err)
+		log.Printf("[ERROR] [getToken] 请求构造失败: %v", err)
 		return "", 0, fmt.Errorf("构造 token 请求失败: %w", err)
 	}
 	req.Header.Set("Authorization", basicAuth)
@@ -145,31 +145,31 @@ func (c *Client) fetchToken() (string, time.Duration, error) {
 	start := time.Now()
 	resp, err := c.getHTTPClient().Do(req)
 	if err != nil {
-		log.Printf("[getToken] 请求失败: %v", err)
+		log.Printf("[ERROR] [getToken] 请求失败: %v", err)
 		return "", 0, fmt.Errorf("请求 token 接口失败: %w", err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("[getToken] 读取响应失败: %v", err)
+		log.Printf("[ERROR] [getToken] 读取响应失败: %v", err)
 		return "", 0, fmt.Errorf("读取 token 响应失败: %w", err)
 	}
 	cost := time.Since(start)
 	rawBody := strings.TrimSpace(string(body))
 	log.Printf("[getToken] 原始响应: %s", rawBody)
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("[getToken] 请求结束: HTTP %d, 耗时 %v", resp.StatusCode, cost)
+		log.Printf("[ERROR] [getToken] 请求结束: HTTP %d, 耗时 %v", resp.StatusCode, cost)
 		return "", 0, fmt.Errorf("token 接口返回状态码 %d，响应: %s", resp.StatusCode, rawBody)
 	}
 
 	var tokenResp TokenResponse
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		log.Printf("[getToken] 请求结束: HTTP %d, 耗时 %v, JSON 解析失败: %v, 原始响应: %s",
+		log.Printf("[ERROR] [getToken] 请求结束: HTTP %d, 耗时 %v, JSON 解析失败: %v, 原始响应: %s",
 			resp.StatusCode, cost, err, rawBody)
 		return "", 0, fmt.Errorf("token 响应解析失败: %w", err)
 	}
 	if tokenResp.AccessToken == "" {
-		log.Printf("[getToken] 请求结束: HTTP %d, 耗时 %v, access_token 为空, 原始响应: %s",
+		log.Printf("[ERROR] [getToken] 请求结束: HTTP %d, 耗时 %v, access_token 为空, 原始响应: %s",
 			resp.StatusCode, cost, rawBody)
 		return "", 0, fmt.Errorf("token 接口返回的 access_token 为空")
 	}
@@ -205,7 +205,7 @@ func (c *Client) get(fullURL string) ([]byte, error) {
 		return nil, fmt.Errorf("读取 %s 响应失败: %w", fullURL, err)
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
-		log.Printf("[token] 接口 %s 返回 401，access_token 已失效，清空缓存待重新获取", fullURL)
+		log.Printf("[ERROR] [token] 接口 %s 返回 401，access_token 已失效，清空缓存待重新获取", fullURL)
 		c.InvalidateToken()
 	}
 	if resp.StatusCode != http.StatusOK {
@@ -218,7 +218,7 @@ func (c *Client) get(fullURL string) ([]byte, error) {
 func (c *Client) getWithRetry(fullURL string) ([]byte, error) {
 	body, err := c.get(fullURL)
 	if err != nil {
-		log.Printf("请求 %s 失败，刷新 access_token 后重试: %v", fullURL, err)
+		log.Printf("[ERROR] 请求 %s 失败，刷新 access_token 后重试: %v", fullURL, err)
 		c.InvalidateToken()
 		if body, err = c.get(fullURL); err != nil {
 			return nil, err
@@ -270,23 +270,23 @@ func (c *Client) FetchBizConfig(javaURL string) (*config.BizConfig, error) {
 	log.Printf("[fetchConfig] 请求结束: HTTP %d, 耗时 %v, 原始响应: %s", resp.StatusCode, cost, strings.TrimSpace(string(body)))
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("[fetchConfig] 请求结束: HTTP %d, 耗时 %v, 响应: %s", resp.StatusCode, cost, strings.TrimSpace(string(body)))
+		log.Printf("[ERROR] [fetchConfig] 请求结束: HTTP %d, 耗时 %v, 响应: %s", resp.StatusCode, cost, strings.TrimSpace(string(body)))
 		return nil, fmt.Errorf("RS 模块配置接口返回 %d，响应: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	var javaResp JavaConfigResponse
 	if err := json.Unmarshal(body, &javaResp); err != nil {
-		log.Printf("[fetchConfig] 请求结束: HTTP %d, 耗时 %v, JSON 解析失败: %v, 响应: %s", resp.StatusCode, cost, err, strings.TrimSpace(string(body)))
+		log.Printf("[ERROR] [fetchConfig] 请求结束: HTTP %d, 耗时 %v, JSON 解析失败: %v, 响应: %s", resp.StatusCode, cost, err, strings.TrimSpace(string(body)))
 		return nil, fmt.Errorf("解析 RS 模块响应失败: %w", err)
 	}
 
 	if !javaResp.Success {
-		log.Printf("[fetchConfig] 请求结束: HTTP %d, 耗时 %v, success=false, msg=%s", resp.StatusCode, cost, javaResp.Msg)
+		log.Printf("[ERROR] [fetchConfig] 请求结束: HTTP %d, 耗时 %v, success=false, msg=%s", resp.StatusCode, cost, javaResp.Msg)
 		return nil, fmt.Errorf("RS 模块返回失败: %s", javaResp.Msg)
 	}
 
 	if len(javaResp.Data) == 0 {
-		log.Printf("[fetchConfig] 请求结束: HTTP %d, 耗时 %v, data 为空", resp.StatusCode, cost)
+		log.Printf("[ERROR] [fetchConfig] 请求结束: HTTP %d, 耗时 %v, data 为空", resp.StatusCode, cost)
 		return nil, fmt.Errorf("RS 模块返回 data 为空")
 	}
 

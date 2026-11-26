@@ -1,4 +1,4 @@
-﻿package api
+package api
 
 import (
 	"encoding/json"
@@ -66,7 +66,7 @@ func (s *Server) handleFetchConfig(w http.ResponseWriter, r *http.Request) {
 
 	biz, err := s.client.FetchBizConfig(s.javaURL)
 	if err != nil {
-		log.Printf("[api] 拉取初始配置失败: %v", err)
+		log.Printf("[ERROR] [api] 拉取初始配置失败: %v", err)
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("拉取初始配置失败: %v", err))
 		return
 	}
@@ -80,7 +80,7 @@ func (s *Server) handleFetchConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.mgr.UpdateFields(fieldMap); err != nil {
-		log.Printf("[api] 保存初始配置失败: %v", err)
+		log.Printf("[ERROR] [api] 保存初始配置失败: %v", err)
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("保存初始配置失败: %v", err))
 		return
 	}
